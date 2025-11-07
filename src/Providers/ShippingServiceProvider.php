@@ -27,7 +27,7 @@ final class ShippingServiceProvider extends ServiceProvider
     {
         $this->publishes([
             __DIR__ . '/../../config/shipping.php' => $this->app->configPath('shipping.php'),
-        ], 'config');
+        ], ['shipping-config', 'config']);
     }
 }
 
