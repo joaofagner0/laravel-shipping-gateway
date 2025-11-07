@@ -1,0 +1,223 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Fagner\LaravelShippingGateway\Adapters;
+
+use Fagner\LaravelShippingGateway\DTOs\LabelResult;
+use Fagner\LaravelShippingGateway\DTOs\RateResult;
+use Fagner\LaravelShippingGateway\DTOs\ShipmentRequest;
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
+use RuntimeException;
+
+final class MelhorEnvioAdapter extends AbstractAdapter
+{
+    /**
+     * @param array<string, mixed> $config Configurações específicas do Melhor Envio.
+     */
+    public function __construct(array $config, ?Client $client = null)
+    {
+        if (($config['use_sandbox'] ?? false) === true) {
+            $config['base_uri'] = $config['sandbox_base_uri'] ?? 'https://sandbox.melhorenvio.com.br/api/v2/';
+        }
+
+        parent::__construct($config, $client);
+    }
+
+    public function consultarPrecos(ShipmentRequest $solicitacaoRemessa): array
+    {
+        $pesoGramas = max(1, (int) round($solicitacaoRemessa->pesoKg * 1000));
+
+        $payload = [
+            'from' => ['zip_code' => $solicitacaoRemessa->cepOrigem],
+            'to' => ['zip_code' => $solicitacaoRemessa->cepDestino],
+            'weight' => $pesoGramas,
+            'dimensions' => [
+                'height' => (int) round($solicitacaoRemessa->alturaCm),
+                'width' => (int) round($solicitacaoRemessa->larguraCm),
+                'length' => (int) round($solicitacaoRemessa->comprimentoCm),
+            ],
+            'insurance_value' => $solicitacaoRemessa->valor,
+        ];
+
+        $options = [
+            'json' => $payload,
+        ];
+
+        if (!empty($this->config['token'])) {
+            $options['headers']['Authorization'] = 'Bearer ' . $this->config['token'];
+        }
+
+        try {
+            $response = $this->client->post('shipping/calculate', $options);
+        } catch (GuzzleException $exception) {
+            return [];
+        }
+
+        $decoded = json_decode((string) $response->getBody(), true);
+
+        if (!is_array($decoded) || !isset($decoded['data']) || !is_array($decoded['data'])) {
+            return [];
+        }
+
+        $results = [];
+
+        foreach ($decoded['data'] as $rate) {
+            if (!is_array($rate)) {
+                continue;
+            }
+
+            $serviceName = $rate['service_name'] ?? ($rate['service']['name'] ?? '');
+
+            if ($serviceName === '') {
+                continue;
+            }
+
+            $price = isset($rate['price']) ? (float) $rate['price'] : null;
+
+            if ($price === null) {
+                continue;
+            }
+
+            $estimatedDays = isset($rate['delivery_time']) ? (int) $rate['delivery_time'] : null;
+
+            $results[] = new RateResult(
+                provedor: 'melhor_envio',
+                servico: $serviceName,
+                preco: $price,
+                diasEstimados: $estimatedDays,
+                bruto: $rate
+            );
+        }
+
+        return $results;
+    }
+
+    public function gerarEtiqueta(ShipmentRequest $solicitacaoRemessa): LabelResult
+    {
+        return $this->processarEtiqueta($solicitacaoRemessa);
+    }
+
+    public function imprimirEtiqueta(ShipmentRequest $solicitacaoRemessa): LabelResult
+    {
+        return $this->processarEtiqueta($solicitacaoRemessa);
+    }
+
+    private function processarEtiqueta(ShipmentRequest $solicitacaoRemessa): LabelResult
+    {
+        $opcoes = $solicitacaoRemessa->opcoes;
+
+        $serviceId = $opcoes['service_id'] ?? null;
+
+        if ($serviceId === null) {
+            throw new RuntimeException('service_id é obrigatório para criar uma remessa no Melhor Envio.');
+        }
+
+        $from = $opcoes['from'] ?? null;
+        $to = $opcoes['to'] ?? null;
+
+        if (!is_array($from) || !is_array($to)) {
+            throw new RuntimeException('As chaves "from" e "to" devem ser informadas nas opções.');
+        }
+
+        $pesoGramas = max(1, (int) round($solicitacaoRemessa->pesoKg * 1000));
+
+        $volumes = $opcoes['volumes'] ?? [[
+            'weight' => $pesoGramas,
+            'height' => (int) round($solicitacaoRemessa->alturaCm),
+            'width' => (int) round($solicitacaoRemessa->larguraCm),
+            'length' => (int) round($solicitacaoRemessa->comprimentoCm),
+        ]];
+
+        $orderOptions = $opcoes['options'] ?? [];
+
+        if (!array_key_exists('insurance_value', $orderOptions)) {
+            $orderOptions['insurance_value'] = $solicitacaoRemessa->valor;
+        }
+
+        $order = [
+            'service' => $serviceId,
+            'from' => $from,
+            'to' => $to,
+            'volumes' => $volumes,
+            'options' => $orderOptions,
+        ];
+
+        if (isset($opcoes['products']) && is_array($opcoes['products'])) {
+            $order['products'] = $opcoes['products'];
+        }
+
+        if (isset($opcoes['tags']) && is_array($opcoes['tags'])) {
+            $order['tags'] = $opcoes['tags'];
+        }
+
+        try {
+            $orderResponse = $this->client->post('shipping/orders', [
+                'json' => ['orders' => [$order]],
+            ]);
+        } catch (GuzzleException $exception) {
+            throw new RuntimeException('Falha ao criar remessa no Melhor Envio.', 0, $exception);
+        }
+
+        $orderDecoded = json_decode((string) $orderResponse->getBody(), true);
+
+        if (!is_array($orderDecoded) || !isset($orderDecoded['data'][0]) || !is_array($orderDecoded['data'][0])) {
+            throw new RuntimeException('Resposta inesperada ao criar remessa no Melhor Envio.');
+        }
+
+        $orderData = $orderDecoded['data'][0];
+
+        $orderId = $orderData['id'] ?? $orderData['order_id'] ?? null;
+
+        if ($orderId === null) {
+            throw new RuntimeException('Não foi possível identificar o ID da remessa criada.');
+        }
+
+        $trackingCode = $orderData['tracking_code'] ?? null;
+
+        if ($trackingCode === null && isset($orderData['tracking'])) {
+            if (is_string($orderData['tracking'])) {
+                $trackingCode = $orderData['tracking'];
+            } elseif (is_array($orderData['tracking']) && isset($orderData['tracking']['code'])) {
+                $trackingCode = $orderData['tracking']['code'];
+            }
+        }
+
+        $labelType = $opcoes['label_type'] ?? 'base64';
+
+        try {
+            $labelResponse = $this->client->post('shipping/labels', [
+                'json' => [
+                    'orders' => [$orderId],
+                    'type' => $labelType,
+                ],
+            ]);
+        } catch (GuzzleException $exception) {
+            throw new RuntimeException('Falha ao solicitar impressão da etiqueta no Melhor Envio.', 0, $exception);
+        }
+
+        $labelDecoded = json_decode((string) $labelResponse->getBody(), true);
+
+        $labelBase64 = null;
+
+        if (is_array($labelDecoded)) {
+            if (isset($labelDecoded['data']['base64']) && is_string($labelDecoded['data']['base64'])) {
+                $labelBase64 = $labelDecoded['data']['base64'];
+            } elseif (isset($labelDecoded['data'][0]['base64']) && is_string($labelDecoded['data'][0]['base64'])) {
+                $labelBase64 = $labelDecoded['data'][0]['base64'];
+            }
+        }
+
+        return new LabelResult(
+            provedor: 'melhor_envio',
+            codigoRastreio: $trackingCode ?? '',
+            etiquetaBase64: $labelBase64,
+            bruto: [
+                'order' => $orderData,
+                'label' => $labelDecoded,
+            ]
+        );
+    }
+}
+

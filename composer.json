@@ -1,0 +1,31 @@
+{
+    "name": "fagner/laravel-shipping-gateway",
+    "description": "Unified shipping gateway for MelhorEnvio and Correios",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Fagner\\LaravelShippingGateway\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "joaofagner0",
+            "email": "fagnerjfds@gmail.com"
+        }
+    ],
+    "require": {
+        "illuminate/support": "^10.0|^11.0",
+        "guzzlehttp/guzzle": "^7.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0",
+        "phpunit/phpunit": "^10.0"
+    },
+    "minimum-stability": "stable",
+    "autoload-dev": {
+        "psr-4": {
+            "Fagner\\LaravelShippingGateway\\Tests\\": "tests/"
+        }
+    }
+}
