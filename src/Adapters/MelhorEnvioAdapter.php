@@ -9,6 +9,7 @@ use Fagner\LaravelShippingGateway\DTOs\RateResult;
 use Fagner\LaravelShippingGateway\DTOs\ShipmentRequest;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
+use Psr\Log\LoggerInterface;
 use RuntimeException;
 
 final class MelhorEnvioAdapter extends AbstractAdapter
@@ -16,13 +17,13 @@ final class MelhorEnvioAdapter extends AbstractAdapter
     /**
      * @param array<string, mixed> $config Configurações específicas do Melhor Envio.
      */
-    public function __construct(array $config, ?Client $client = null)
+    public function __construct(array $config, ?Client $client = null, ?LoggerInterface $logger = null)
     {
         if (($config['use_sandbox'] ?? false) === true) {
             $config['base_uri'] = $config['sandbox_base_uri'] ?? 'https://sandbox.melhorenvio.com.br/api/v2/';
         }
 
-        parent::__construct($config, $client);
+        parent::__construct($config, $client, $logger);
     }
 
     public function consultarPrecos(ShipmentRequest $solicitacaoRemessa): array
@@ -52,12 +53,20 @@ final class MelhorEnvioAdapter extends AbstractAdapter
         try {
             $response = $this->client->post('shipping/calculate', $options);
         } catch (GuzzleException $exception) {
+            $this->log('error', 'Falha ao consultar cotações no Melhor Envio.', [
+                'exception' => $exception,
+                'payload' => $payload,
+            ]);
             return [];
         }
 
-        $decoded = json_decode((string) $response->getBody(), true);
+        $body = (string) $response->getBody();
+        $decoded = json_decode($body, true);
 
         if (!is_array($decoded) || !isset($decoded['data']) || !is_array($decoded['data'])) {
+            $this->log('warning', 'Resposta inesperada ao consultar cotações no Melhor Envio.', [
+                'body' => $body,
+            ]);
             return [];
         }
 
@@ -111,6 +120,9 @@ final class MelhorEnvioAdapter extends AbstractAdapter
         $serviceId = $opcoes['service_id'] ?? null;
 
         if ($serviceId === null) {
+            $this->log('error', 'service_id não informado para criação de remessa no Melhor Envio.', [
+                'opcoes' => $opcoes,
+            ]);
             throw new RuntimeException('service_id é obrigatório para criar uma remessa no Melhor Envio.');
         }
 
@@ -118,6 +130,10 @@ final class MelhorEnvioAdapter extends AbstractAdapter
         $to = $opcoes['to'] ?? null;
 
         if (!is_array($from) || !is_array($to)) {
+            $this->log('error', 'Dados de origem/destino inválidos ao criar remessa no Melhor Envio.', [
+                'from' => $from,
+                'to' => $to,
+            ]);
             throw new RuntimeException('As chaves "from" e "to" devem ser informadas nas opções.');
         }
 
@@ -157,12 +173,20 @@ final class MelhorEnvioAdapter extends AbstractAdapter
                 'json' => ['orders' => [$order]],
             ]);
         } catch (GuzzleException $exception) {
+            $this->log('error', 'Falha na requisição de criação de remessa no Melhor Envio.', [
+                'exception' => $exception,
+                'order' => $order,
+            ]);
             throw new RuntimeException('Falha ao criar remessa no Melhor Envio.', 0, $exception);
         }
 
-        $orderDecoded = json_decode((string) $orderResponse->getBody(), true);
+        $orderBody = (string) $orderResponse->getBody();
+        $orderDecoded = json_decode($orderBody, true);
 
         if (!is_array($orderDecoded) || !isset($orderDecoded['data'][0]) || !is_array($orderDecoded['data'][0])) {
+            $this->log('error', 'Resposta inesperada ao criar remessa no Melhor Envio.', [
+                'body' => $orderBody,
+            ]);
             throw new RuntimeException('Resposta inesperada ao criar remessa no Melhor Envio.');
         }
 
@@ -171,6 +195,9 @@ final class MelhorEnvioAdapter extends AbstractAdapter
         $orderId = $orderData['id'] ?? $orderData['order_id'] ?? null;
 
         if ($orderId === null) {
+            $this->log('error', 'Resposta do Melhor Envio não contém ID da remessa.', [
+                'order' => $orderData,
+            ]);
             throw new RuntimeException('Não foi possível identificar o ID da remessa criada.');
         }
 
@@ -194,10 +221,16 @@ final class MelhorEnvioAdapter extends AbstractAdapter
                 ],
             ]);
         } catch (GuzzleException $exception) {
+            $this->log('error', 'Falha na requisição de impressão de etiqueta no Melhor Envio.', [
+                'exception' => $exception,
+                'order_id' => $orderId,
+                'label_type' => $labelType,
+            ]);
             throw new RuntimeException('Falha ao solicitar impressão da etiqueta no Melhor Envio.', 0, $exception);
         }
 
-        $labelDecoded = json_decode((string) $labelResponse->getBody(), true);
+        $labelBody = (string) $labelResponse->getBody();
+        $labelDecoded = json_decode($labelBody, true);
 
         $labelBase64 = null;
 
@@ -208,6 +241,19 @@ final class MelhorEnvioAdapter extends AbstractAdapter
                 $labelBase64 = $labelDecoded['data'][0]['base64'];
             }
         }
+
+        if ($labelBase64 === null) {
+            $this->log('warning', 'Etiqueta gerada sem conteúdo base64 no Melhor Envio.', [
+                'order_id' => $orderId,
+                'response' => $labelDecoded,
+            ]);
+        }
+
+        $this->log('info', 'Etiqueta gerada com sucesso no Melhor Envio.', [
+            'order_id' => $orderId,
+            'tracking_code' => $trackingCode,
+            'label_type' => $labelType,
+        ]);
 
         return new LabelResult(
             provedor: 'melhor_envio',

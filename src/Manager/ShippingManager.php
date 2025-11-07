@@ -10,6 +10,7 @@ use Fagner\LaravelShippingGateway\Contracts\ShippingGatewayInterface;
 use Fagner\LaravelShippingGateway\DTOs\ShipmentRequest;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Container\Container;
+use Psr\Log\LoggerInterface;
 
 final class ShippingManager
 {
@@ -52,10 +53,13 @@ final class ShippingManager
     private function createDriver(string $name): ShippingGatewayInterface
     {
         $config = $this->getConfigRepository()->get("shipping.providers.{$name}", []);
+        $logger = $this->container->bound(LoggerInterface::class)
+            ? $this->container->make(LoggerInterface::class)
+            : null;
 
         return match ($name) {
-            'melhor_envio' => new MelhorEnvioAdapter($config),
-            'correios' => new CorreiosAdapter($config),
+            'melhor_envio' => new MelhorEnvioAdapter($config, logger: $logger),
+            'correios' => new CorreiosAdapter($config, logger: $logger),
             default => throw new \InvalidArgumentException("Driver de frete não suportado [{$name}]."),
         };
     }

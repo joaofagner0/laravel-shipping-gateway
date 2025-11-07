@@ -8,6 +8,7 @@ Gateway unificado para Melhor Envio e Correios com foco em integrações Laravel
 - [Configuração](#configuração)
 - [Uso básico](#uso-básico)
 - [Sandbox do Melhor Envio](#sandbox-do-melhor-envio)
+- [Logs e observabilidade](#logs-e-observabilidade)
 - [Testes](#testes)
 - [Contribuindo](#contribuindo)
 
@@ -110,6 +111,12 @@ $todas = $shippingManager->getRatesFromAllProviders($solicitacao);
 ## Sandbox do Melhor Envio
 
 Ative o sandbox definindo `MELHOR_ENVIO_USE_SANDBOX=true` e forneça o endpoint/token apropriado. Consulte a [documentação oficial do Sandbox do Melhor Envio](https://docs.melhorenvio.com.br/docs/sandbox) para gerar credenciais, entender as limitações e simular fluxos com segurança.
+
+## Logs e observabilidade
+
+Os adapters emitem logs através de PSR-3 (`psr/log`). Em um projeto Laravel, o logger padrão do framework é detectado automaticamente. Eventos como falhas de requisição, respostas inesperadas ou etiquetas geradas sem conteúdo são registrados com níveis `error`/`warning`, enquanto operações bem-sucedidas de geração de etiqueta são registradas em `info`.
+
+Se quiser inspecionar ou customizar os registros, ajuste o canal de log da aplicação ou injete um logger próprio ao resolver o `ShippingManager`.
 
 ## Testes
 
