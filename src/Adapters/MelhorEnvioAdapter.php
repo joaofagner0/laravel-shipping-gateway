@@ -78,7 +78,16 @@ final class MelhorEnvioAdapter extends AbstractAdapter
         $body = (string) $response->getBody();
         $decoded = json_decode($body, true);
 
-        if (!is_array($decoded) || !isset($decoded['data']) || !is_array($decoded['data'])) {
+        if (!is_array($decoded)) {
+            $this->log('warning', 'Resposta inesperada ao consultar cotações no Melhor Envio.', [
+                'body' => $body,
+            ]);
+            return [];
+        }
+
+        $ratesData = array_is_list($decoded) ? $decoded : ($decoded['data'] ?? null);
+
+        if (!is_array($ratesData)) {
             $this->log('warning', 'Resposta inesperada ao consultar cotações no Melhor Envio.', [
                 'body' => $body,
             ]);
@@ -87,24 +96,27 @@ final class MelhorEnvioAdapter extends AbstractAdapter
 
         $results = [];
 
-        foreach ($decoded['data'] as $rate) {
+        foreach ($ratesData as $rate) {
             if (!is_array($rate)) {
                 continue;
             }
 
-            $serviceName = $rate['service_name'] ?? ($rate['service']['name'] ?? '');
+            $serviceName = $rate['service_name']
+                ?? ($rate['service']['name'] ?? ($rate['name'] ?? ''));
 
             if ($serviceName === '') {
                 continue;
             }
 
-            $price = isset($rate['price']) ? (float) $rate['price'] : null;
+            $price = $rate['custom_price'] ?? $rate['price'] ?? null;
+            $price = $price !== null ? (float) $price : null;
 
             if ($price === null) {
                 continue;
             }
 
-            $estimatedDays = isset($rate['delivery_time']) ? (int) $rate['delivery_time'] : null;
+            $estimatedDays = $rate['custom_delivery_time'] ?? $rate['delivery_time'] ?? null;
+            $estimatedDays = $estimatedDays !== null ? (int) $estimatedDays : null;
 
             $results[] = new RateResult(
                 provedor: 'melhor_envio',
