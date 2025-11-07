@@ -28,7 +28,16 @@ composer require fagner/laravel-shipping-gateway
    php artisan vendor:publish --tag=shipping-config
    ```
 
-2. Defina as variáveis de ambiente necessárias no `.env` do projeto que consome a lib:
+2. (Opcional) Publique e personalize o arquivo de configuração:
+
+   ```bash
+   php artisan vendor:publish --tag=shipping-config
+   # ou php artisan vendor:publish --tag=laravel-shipping-gateway-config
+   ```
+
+   Caso não publique, a lib usa os valores padrão do pacote.
+
+3. Defina as variáveis de ambiente necessárias no `.env` do projeto que consome a lib:
 
    ```dotenv
    SHIPPING_DEFAULT=melhor_envio
@@ -43,7 +52,7 @@ composer require fagner/laravel-shipping-gateway
    CORREIOS_TIMEOUT=10
    ```
 
-3. Limpe ou recrie o cache de configuração se necessário:
+4. Limpe ou recrie o cache de configuração se necessário:
 
    ```bash
    php artisan config:clear

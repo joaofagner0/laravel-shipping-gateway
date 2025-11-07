@@ -25,9 +25,11 @@ final class ShippingServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        $this->publishes([
-            __DIR__ . '/../../config/shipping.php' => $this->app->configPath('shipping.php'),
-        ], ['shipping-config', 'config']);
+        if ($this->app->runningInConsole()) {
+            $this->publishes([
+                __DIR__ . '/../../config/shipping.php' => $this->app->configPath('shipping.php'),
+            ], ['shipping-config', 'config', 'laravel-shipping-gateway-config']);
+        }
     }
 }
 
