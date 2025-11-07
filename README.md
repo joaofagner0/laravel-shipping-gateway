@@ -20,8 +20,6 @@ Adicione o pacote ao seu projeto Laravel via Composer:
 composer require fagner/laravel-shipping-gateway
 ```
 
-> Caso esteja testando localmente antes de publicar no Packagist, configure o repositório no seu `composer.json` utilizando `path` ou `vcs`.
-
 ## Configuração
 
 1. Publique o arquivo de configuração (opcional):
