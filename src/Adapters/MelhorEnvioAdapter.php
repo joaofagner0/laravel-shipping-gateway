@@ -28,19 +28,34 @@ final class MelhorEnvioAdapter extends AbstractAdapter
 
     public function consultarPrecos(ShipmentRequest $solicitacaoRemessa): array
     {
-        $pesoGramas = max(1, (int) round($solicitacaoRemessa->pesoKg * 1000));
+        $pesoKg = max(0.001, round($solicitacaoRemessa->pesoKg, 3));
 
         $payload = [
-            'from' => ['zip_code' => $solicitacaoRemessa->cepOrigem],
-            'to' => ['zip_code' => $solicitacaoRemessa->cepDestino],
-            'weight' => $pesoGramas,
-            'dimensions' => [
+            'from' => ['postal_code' => $solicitacaoRemessa->cepOrigem],
+            'to' => ['postal_code' => $solicitacaoRemessa->cepDestino],
+            'package' => [
                 'height' => (int) round($solicitacaoRemessa->alturaCm),
                 'width' => (int) round($solicitacaoRemessa->larguraCm),
                 'length' => (int) round($solicitacaoRemessa->comprimentoCm),
+                'weight' => $pesoKg,
             ],
-            'insurance_value' => $solicitacaoRemessa->valor,
+            'options' => [
+                'insurance_value' => $solicitacaoRemessa->valor,
+            ],
         ];
+
+        if (!empty($solicitacaoRemessa->opcoes['options']) && is_array($solicitacaoRemessa->opcoes['options'])) {
+            $payload['options'] = array_merge($payload['options'], $solicitacaoRemessa->opcoes['options']);
+        }
+
+        if (!empty($solicitacaoRemessa->opcoes['services'])) {
+            $payload['services'] = $solicitacaoRemessa->opcoes['services'];
+        }
+
+        if (!empty($solicitacaoRemessa->opcoes['products']) && is_array($solicitacaoRemessa->opcoes['products'])) {
+            $payload['products'] = $solicitacaoRemessa->opcoes['products'];
+            unset($payload['package']);
+        }
 
         $options = [
             'json' => $payload,
@@ -51,7 +66,7 @@ final class MelhorEnvioAdapter extends AbstractAdapter
         }
 
         try {
-            $response = $this->client->post('shipping/calculate', $options);
+            $response = $this->client->post('me/shipment/calculate', $options);
         } catch (GuzzleException $exception) {
             $this->log('error', 'Falha ao consultar cotações no Melhor Envio.', [
                 'exception' => $exception,

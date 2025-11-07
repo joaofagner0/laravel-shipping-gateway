@@ -22,13 +22,29 @@ composer require fagner/laravel-shipping-gateway
 
 ## Configuração
 
-1. Publique o arquivo de configuração (opcional):
+1. Registre o `ShippingServiceProvider` na sua aplicação Laravel:
+
+   - **Laravel <= 10**: adicione `Fagner\LaravelShippingGateway\Providers\ShippingServiceProvider::class` ao array `providers` em `config/app.php`.
+   - **Laravel 11+**: edite `bootstrap/app.php` e inclua o provider dentro de `withProviders`, por exemplo:
+
+     ```php
+     use Fagner\LaravelShippingGateway\Providers\ShippingServiceProvider;
+
+     return Application::configure(basePath: dirname(__DIR__))
+         // ...
+         ->withProviders([
+             ShippingServiceProvider::class,
+         ])
+         ->create();
+     ```
+
+2. Publique o arquivo de configuração (opcional):
 
    ```bash
    php artisan vendor:publish --tag=shipping-config
    ```
 
-2. (Opcional) Publique e personalize o arquivo de configuração:
+3. (Opcional) Publique e personalize o arquivo de configuração:
 
    ```bash
    php artisan vendor:publish --tag=shipping-config
@@ -37,7 +53,7 @@ composer require fagner/laravel-shipping-gateway
 
    Caso não publique, a lib usa os valores padrão do pacote.
 
-3. Defina as variáveis de ambiente necessárias no `.env` do projeto que consome a lib:
+4. Defina as variáveis de ambiente necessárias no `.env` do projeto que consome a lib:
 
    ```dotenv
    SHIPPING_DEFAULT=melhor_envio
@@ -52,7 +68,7 @@ composer require fagner/laravel-shipping-gateway
    CORREIOS_TIMEOUT=10
    ```
 
-4. Limpe ou recrie o cache de configuração se necessário:
+5. Limpe ou recrie o cache de configuração se necessário:
 
    ```bash
    php artisan config:clear
