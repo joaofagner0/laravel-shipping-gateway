@@ -1,0 +1,32 @@
+# Dependency directories
+/vendor/
+
+# Composer artefacts
+composer.lock
+/.phpunit.result.cache
+/.phpunit.cache
+/.phpactor/
+
+# Environment files
+.env
+.env.*
+
+# IDE / editor
+.idea/
+.vscode/
+*.code-workspace
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+
+# Coverage / build output
+coverage/
+build/
+dist/
+
+# Logs / cache
+*.log
+storage/
+bootstrap/cache/
+
