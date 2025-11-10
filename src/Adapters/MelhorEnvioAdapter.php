@@ -57,13 +57,9 @@ final class MelhorEnvioAdapter extends AbstractAdapter
             unset($payload['package']);
         }
 
-        $options = [
+        $options = $this->withDefaultHeaders([
             'json' => $payload,
-        ];
-
-        if (!empty($this->config['token'])) {
-            $options['headers']['Authorization'] = 'Bearer ' . $this->config['token'];
-        }
+        ]);
 
         try {
             $response = $this->client->post('me/shipment/calculate', $options);
@@ -195,10 +191,12 @@ final class MelhorEnvioAdapter extends AbstractAdapter
             $order['tags'] = $opcoes['tags'];
         }
 
+        $orderOptions = $this->withDefaultHeaders([
+            'json' => ['orders' => [$order]],
+        ]);
+
         try {
-            $orderResponse = $this->client->post('shipping/orders', [
-                'json' => ['orders' => [$order]],
-            ]);
+            $orderResponse = $this->client->post('shipping/orders', $orderOptions);
         } catch (GuzzleException $exception) {
             $this->log('error', 'Falha na requisição de criação de remessa no Melhor Envio.', [
                 'exception' => $exception,
@@ -240,13 +238,15 @@ final class MelhorEnvioAdapter extends AbstractAdapter
 
         $labelType = $opcoes['label_type'] ?? 'base64';
 
+        $labelOptions = $this->withDefaultHeaders([
+            'json' => [
+                'orders' => [$orderId],
+                'type' => $labelType,
+            ],
+        ]);
+
         try {
-            $labelResponse = $this->client->post('shipping/labels', [
-                'json' => [
-                    'orders' => [$orderId],
-                    'type' => $labelType,
-                ],
-            ]);
+            $labelResponse = $this->client->post('shipping/labels', $labelOptions);
         } catch (GuzzleException $exception) {
             $this->log('error', 'Falha na requisição de impressão de etiqueta no Melhor Envio.', [
                 'exception' => $exception,
@@ -291,6 +291,24 @@ final class MelhorEnvioAdapter extends AbstractAdapter
                 'label' => $labelDecoded,
             ]
         );
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
+     */
+    private function withDefaultHeaders(array $options): array
+    {
+        $headers = $options['headers'] ?? [];
+        $headers['Accept'] = $headers['Accept'] ?? 'application/json';
+
+        if (!empty($this->config['token']) && empty($headers['Authorization'])) {
+            $headers['Authorization'] = 'Bearer ' . $this->config['token'];
+        }
+
+        $options['headers'] = $headers;
+
+        return $options;
     }
 }
 
