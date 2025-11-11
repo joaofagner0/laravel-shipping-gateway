@@ -1,6 +1,6 @@
 {
-    "name": "fagner/laravel-shipping-gateway",
-    "description": "Gateway unificado de fretes para MelhorEnvio e Correios",
+    "name": "joaofagner0/laravel-shipping-gateway",
+    "description": "Gateway unificado de fretes para MelhorEnvio (logística e transporte)",
     "type": "library",
     "license": "MIT",
     "autoload": {

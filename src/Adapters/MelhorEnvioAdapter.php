@@ -28,8 +28,6 @@ final class MelhorEnvioAdapter extends AbstractAdapter
 
     public function consultarPrecos(ShipmentRequest $solicitacaoRemessa): array
     {
-        $pesoKg = max(0.001, round($solicitacaoRemessa->pesoKg, 3));
-
         $payload = [
             'from' => ['postal_code' => $solicitacaoRemessa->cepOrigem],
             'to' => ['postal_code' => $solicitacaoRemessa->cepDestino],
@@ -37,7 +35,7 @@ final class MelhorEnvioAdapter extends AbstractAdapter
                 'height' => (int) round($solicitacaoRemessa->alturaCm),
                 'width' => (int) round($solicitacaoRemessa->larguraCm),
                 'length' => (int) round($solicitacaoRemessa->comprimentoCm),
-                'weight' => $pesoKg,
+                'weight' => (float) $solicitacaoRemessa->pesoKg,
             ],
             'options' => [
                 'insurance_value' => $solicitacaoRemessa->valor,
@@ -218,10 +216,8 @@ final class MelhorEnvioAdapter extends AbstractAdapter
             throw new RuntimeException('As chaves "from" e "to" devem ser informadas nas opções.');
         }
 
-        $pesoGramas = max(1, (int) round($solicitacaoRemessa->pesoKg * 1000));
-
         $volumes = $opcoes['volumes'] ?? [[
-            'weight' => $pesoGramas,
+            'weight' => (float) $solicitacaoRemessa->pesoKg,
             'height' => (int) round($solicitacaoRemessa->alturaCm),
             'width' => (int) round($solicitacaoRemessa->larguraCm),
             'length' => (int) round($solicitacaoRemessa->comprimentoCm),
