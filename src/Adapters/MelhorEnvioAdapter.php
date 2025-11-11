@@ -126,24 +126,82 @@ final class MelhorEnvioAdapter extends AbstractAdapter
         return $results;
     }
 
+    /**
+     * Gera a etiqueta seguindo o fluxo completo do Melhor Envio:
+     * 1. Adiciona a remessa ao carrinho
+     * 2. Finaliza a compra (checkout)
+     * 3. Gera a etiqueta
+     * 4. Imprime a etiqueta
+     */
     public function gerarEtiqueta(ShipmentRequest $solicitacaoRemessa): LabelResult
     {
-        return $this->processarEtiqueta($solicitacaoRemessa);
+        return $this->processarFluxoCompleto($solicitacaoRemessa);
     }
 
+    /**
+     * Imprime a etiqueta seguindo o fluxo completo do Melhor Envio.
+     * Alias para gerarEtiqueta() pois o processo é o mesmo.
+     */
     public function imprimirEtiqueta(ShipmentRequest $solicitacaoRemessa): LabelResult
     {
-        return $this->processarEtiqueta($solicitacaoRemessa);
+        return $this->processarFluxoCompleto($solicitacaoRemessa);
     }
 
-    private function processarEtiqueta(ShipmentRequest $solicitacaoRemessa): LabelResult
+    /**
+     * Executa o fluxo completo de criação de remessa no Melhor Envio.
+     */
+    private function processarFluxoCompleto(ShipmentRequest $solicitacaoRemessa): LabelResult
+    {
+        // Etapa 1: Adicionar ao carrinho
+        $cartItemId = $this->adicionarAoCarrinho($solicitacaoRemessa);
+
+        // Etapa 2: Finalizar compra (checkout)
+        $purchaseData = $this->finalizarCompra($cartItemId);
+
+        // Etapa 3: Gerar etiqueta
+        $orderData = $this->gerarEtiquetaRemessa($purchaseData);
+
+        // Etapa 4: Imprimir etiqueta
+        $labelData = $this->imprimirEtiquetaRemessa($orderData['id'], $solicitacaoRemessa->opcoes);
+
+        // Buscar dados atualizados da ordem para obter o código de rastreamento
+        // (que pode não estar disponível imediatamente após o checkout)
+        $orderDataAtualizada = $this->buscarOrdem($orderData['id']);
+        
+        // Extrair código de rastreamento dos dados atualizados
+        $trackingCode = $this->extrairCodigoRastreamento($orderDataAtualizada);
+
+        $this->log('info', 'Fluxo completo de etiqueta concluído com sucesso no Melhor Envio.', [
+            'order_id' => $orderData['id'],
+            'tracking_code' => $trackingCode,
+        ]);
+
+        return new LabelResult(
+            provedor: 'melhor_envio',
+            codigoRastreio: $trackingCode ?? '',
+            etiquetaBase64: null, // URL disponível em bruto['label']['url']
+            bruto: [
+                'cart_item' => $cartItemId,
+                'purchase' => $purchaseData,
+                'order' => $orderDataAtualizada,
+                'label' => $labelData,
+                'label_url' => $labelData['url'] ?? null, // URL direta para facilitar acesso
+            ]
+        );
+    }
+
+    /**
+     * Etapa 1: Adiciona uma remessa ao carrinho do Melhor Envio.
+     *
+     * @return string ID do item no carrinho
+     */
+    private function adicionarAoCarrinho(ShipmentRequest $solicitacaoRemessa): string
     {
         $opcoes = $solicitacaoRemessa->opcoes;
 
         $serviceId = $opcoes['service_id'] ?? null;
-
         if ($serviceId === null) {
-            $this->log('error', 'service_id não informado para criação de remessa no Melhor Envio.', [
+            $this->log('error', 'service_id não informado para adicionar ao carrinho no Melhor Envio.', [
                 'opcoes' => $opcoes,
             ]);
             throw new RuntimeException('service_id é obrigatório para criar uma remessa no Melhor Envio.');
@@ -153,7 +211,7 @@ final class MelhorEnvioAdapter extends AbstractAdapter
         $to = $opcoes['to'] ?? null;
 
         if (!is_array($from) || !is_array($to)) {
-            $this->log('error', 'Dados de origem/destino inválidos ao criar remessa no Melhor Envio.', [
+            $this->log('error', 'Dados de origem/destino inválidos ao adicionar ao carrinho no Melhor Envio.', [
                 'from' => $from,
                 'to' => $to,
             ]);
@@ -170,12 +228,11 @@ final class MelhorEnvioAdapter extends AbstractAdapter
         ]];
 
         $orderOptions = $opcoes['options'] ?? [];
-
         if (!array_key_exists('insurance_value', $orderOptions)) {
             $orderOptions['insurance_value'] = $solicitacaoRemessa->valor;
         }
 
-        $order = [
+        $cartItem = [
             'service' => $serviceId,
             'from' => $from,
             'to' => $to,
@@ -184,113 +241,344 @@ final class MelhorEnvioAdapter extends AbstractAdapter
         ];
 
         if (isset($opcoes['products']) && is_array($opcoes['products'])) {
-            $order['products'] = $opcoes['products'];
+            $cartItem['products'] = $opcoes['products'];
         }
 
-        if (isset($opcoes['tags']) && is_array($opcoes['tags'])) {
-            $order['tags'] = $opcoes['tags'];
+        if (isset($opcoes['agency']) && is_int($opcoes['agency'])) {
+            $cartItem['agency'] = $opcoes['agency'];
         }
 
-        $orderOptions = $this->withDefaultHeaders([
-            'json' => ['orders' => [$order]],
+        $requestOptions = $this->withDefaultHeaders([
+            'json' => $cartItem,
         ]);
 
         try {
-            $orderResponse = $this->client->post('shipping/orders', $orderOptions);
+            $response = $this->client->post('me/cart', $requestOptions);
         } catch (GuzzleException $exception) {
-            $this->log('error', 'Falha na requisição de criação de remessa no Melhor Envio.', [
+            $this->log('error', 'Falha ao adicionar remessa ao carrinho no Melhor Envio.', [
                 'exception' => $exception,
-                'order' => $order,
+                'cart_item' => $cartItem,
             ]);
-            throw new RuntimeException('Falha ao criar remessa no Melhor Envio.', 0, $exception);
+            throw new RuntimeException('Falha ao adicionar remessa ao carrinho no Melhor Envio.', 0, $exception);
         }
 
-        $orderBody = (string) $orderResponse->getBody();
-        $orderDecoded = json_decode($orderBody, true);
+        $body = (string) $response->getBody();
+        $decoded = json_decode($body, true);
 
-        if (!is_array($orderDecoded) || !isset($orderDecoded['data'][0]) || !is_array($orderDecoded['data'][0])) {
-            $this->log('error', 'Resposta inesperada ao criar remessa no Melhor Envio.', [
-                'body' => $orderBody,
+        if (!is_array($decoded) || !isset($decoded['id'])) {
+            $this->log('error', 'Resposta inesperada ao adicionar ao carrinho no Melhor Envio.', [
+                'body' => $body,
             ]);
-            throw new RuntimeException('Resposta inesperada ao criar remessa no Melhor Envio.');
+            throw new RuntimeException('Resposta inesperada ao adicionar ao carrinho no Melhor Envio.');
         }
 
-        $orderData = $orderDecoded['data'][0];
+        $this->log('info', 'Remessa adicionada ao carrinho com sucesso no Melhor Envio.', [
+            'cart_item_id' => $decoded['id'],
+        ]);
 
-        $orderId = $orderData['id'] ?? $orderData['order_id'] ?? null;
+        return (string) $decoded['id'];
+    }
 
-        if ($orderId === null) {
-            $this->log('error', 'Resposta do Melhor Envio não contém ID da remessa.', [
-                'order' => $orderData,
-            ]);
-            throw new RuntimeException('Não foi possível identificar o ID da remessa criada.');
-        }
-
-        $trackingCode = $orderData['tracking_code'] ?? null;
-
-        if ($trackingCode === null && isset($orderData['tracking'])) {
-            if (is_string($orderData['tracking'])) {
-                $trackingCode = $orderData['tracking'];
-            } elseif (is_array($orderData['tracking']) && isset($orderData['tracking']['code'])) {
-                $trackingCode = $orderData['tracking']['code'];
-            }
-        }
-
-        $labelType = $opcoes['label_type'] ?? 'base64';
-
-        $labelOptions = $this->withDefaultHeaders([
+    /**
+     * Etapa 2: Finaliza a compra (checkout) dos itens no carrinho.
+     *
+     * @param string $cartItemId ID do item no carrinho
+     * @return array Dados da compra realizada
+     */
+    private function finalizarCompra(string $cartItemId): array
+    {
+        $requestOptions = $this->withDefaultHeaders([
             'json' => [
-                'orders' => [$orderId],
-                'type' => $labelType,
+                'orders' => [$cartItemId],
             ],
         ]);
 
         try {
-            $labelResponse = $this->client->post('shipping/labels', $labelOptions);
+            $response = $this->client->post('me/shipment/checkout', $requestOptions);
         } catch (GuzzleException $exception) {
-            $this->log('error', 'Falha na requisição de impressão de etiqueta no Melhor Envio.', [
+            $this->log('error', 'Falha ao finalizar compra (checkout) no Melhor Envio.', [
                 'exception' => $exception,
-                'order_id' => $orderId,
-                'label_type' => $labelType,
+                'cart_item_id' => $cartItemId,
             ]);
-            throw new RuntimeException('Falha ao solicitar impressão da etiqueta no Melhor Envio.', 0, $exception);
+            throw new RuntimeException('Falha ao finalizar compra no Melhor Envio.', 0, $exception);
         }
 
-        $labelBody = (string) $labelResponse->getBody();
-        $labelDecoded = json_decode($labelBody, true);
+        $body = (string) $response->getBody();
+        $decoded = json_decode($body, true);
 
-        $labelBase64 = null;
+        if (!is_array($decoded) || !isset($decoded['purchase'])) {
+            $this->log('error', 'Resposta inesperada ao finalizar compra no Melhor Envio.', [
+                'body' => $body,
+            ]);
+            throw new RuntimeException('Resposta inesperada ao finalizar compra no Melhor Envio.');
+        }
 
-        if (is_array($labelDecoded)) {
-            if (isset($labelDecoded['data']['base64']) && is_string($labelDecoded['data']['base64'])) {
-                $labelBase64 = $labelDecoded['data']['base64'];
-            } elseif (isset($labelDecoded['data'][0]['base64']) && is_string($labelDecoded['data'][0]['base64'])) {
-                $labelBase64 = $labelDecoded['data'][0]['base64'];
+        $this->log('info', 'Compra finalizada com sucesso no Melhor Envio.', [
+            'purchase' => $decoded['purchase'],
+        ]);
+
+        return $decoded;
+    }
+
+    /**
+     * Etapa 3: Gera a etiqueta para a remessa comprada.
+     *
+     * @param array $purchaseData Dados da compra
+     * @return array Dados da ordem gerada
+     */
+    private function gerarEtiquetaRemessa(array $purchaseData): array
+    {
+        $orderIds = $purchaseData['purchase']['orders'] ?? [];
+
+        if (empty($orderIds) || !is_array($orderIds)) {
+            $this->log('error', 'Nenhum order_id encontrado na resposta do checkout.', [
+                'purchase_data' => $purchaseData,
+            ]);
+            throw new RuntimeException('Nenhum order_id encontrado após o checkout.');
+        }
+
+        $orderData = $orderIds[0] ?? null;
+
+        if (!is_array($orderData) || !isset($orderData['id'])) {
+            $this->log('error', 'Dados da ordem inválidos na resposta do checkout.', [
+                'orders' => $orderIds,
+            ]);
+            throw new RuntimeException('Dados da ordem inválidos após o checkout.');
+        }
+
+        $status = $orderData['status'] ?? null;
+        $statusesInvalidos = ['canceled', 'expired', 'suspended'];
+        
+        if (in_array($status, $statusesInvalidos)) {
+            $this->log('error', 'Ordem em status inválido para geração de etiqueta.', [
+                'order_id' => $orderData['id'],
+                'status' => $status,
+            ]);
+            throw new RuntimeException("Ordem está em status '{$status}' e não pode ser processada.");
+        }
+
+        $orderId = $orderData['id'];
+
+        $requestOptions = $this->withDefaultHeaders([
+            'json' => [
+                'orders' => [$orderId],
+            ],
+        ]);
+
+        try {
+            $response = $this->client->post('me/shipment/generate', $requestOptions);
+        } catch (GuzzleException $exception) {
+            $this->log('error', 'Falha ao solicitar geração de etiqueta no Melhor Envio.', [
+                'exception' => $exception,
+                'order_id' => $orderId,
+            ]);
+            throw new RuntimeException('Falha ao solicitar geração de etiqueta no Melhor Envio.', 0, $exception);
+        }
+
+        $body = (string) $response->getBody();
+        $decoded = json_decode($body, true);
+
+        if (!is_array($decoded)) {
+            $this->log('error', 'Resposta inesperada ao solicitar geração de etiqueta no Melhor Envio.', [
+                'body' => $body,
+            ]);
+            throw new RuntimeException('Resposta inesperada ao solicitar geração de etiqueta no Melhor Envio.');
+        }
+
+        // A API retorna confirmação assíncrona: {"generate_key": "...", "order-id": {"message": "...", "status": true}}
+        $orderConfirmation = $decoded[$orderId] ?? null;
+        $generateKey = $decoded['generate_key'] ?? null;
+        
+        if (!is_array($orderConfirmation) || ($orderConfirmation['status'] ?? false) !== true) {
+            $this->log('error', 'Geração de etiqueta não foi confirmada pelo Melhor Envio.', [
+                'body' => $body,
+                'order_id' => $orderId,
+            ]);
+            throw new RuntimeException('Geração de etiqueta não foi confirmada pelo Melhor Envio.');
+        }
+
+        $this->log('info', 'Etiqueta encaminhada para geração no Melhor Envio.', [
+            'order_id' => $orderId,
+            'generate_key' => $generateKey,
+            'message' => $orderConfirmation['message'] ?? null,
+        ]);
+
+        // Após o checkout, a ordem já está com status 'released' e pode ser impressa
+        // Os dados completos da ordem já estão disponíveis na resposta do checkout
+        // Não precisamos fazer polling, pois o print aceita ordens com status 'released'
+        return $orderData;
+    }
+
+    /**
+     * Etapa 4: Solicita a impressão da etiqueta com retry.
+     *
+     * @param string|int $orderId ID da ordem
+     * @param array<string, mixed> $opcoes Opções adicionais
+     * @return array Dados da etiqueta para impressão (contém URL)
+     */
+    private function imprimirEtiquetaRemessa($orderId, array $opcoes): array
+    {
+        $mode = $opcoes['print_mode'] ?? 'public';
+
+        $requestOptions = $this->withDefaultHeaders([
+            'json' => [
+                'mode' => $mode,
+                'orders' => [$orderId],
+            ],
+        ]);
+
+        $maxTentativas = 3;
+        $intervalo = 2; // segundos entre tentativas
+
+        for ($tentativa = 1; $tentativa <= $maxTentativas; $tentativa++) {
+            try {
+                $response = $this->client->post('me/shipment/print', $requestOptions);
+                $body = (string) $response->getBody();
+                $decoded = json_decode($body, true);
+
+                // Verificar se a resposta contém URL ou dados válidos
+                if (!is_array($decoded) || (empty($decoded['url']) && empty($decoded['data']))) {
+                    $this->log('warning', "Tentativa {$tentativa}/{$maxTentativas}: Resposta de impressão sem URL válida.", [
+                        'order_id' => $orderId,
+                        'response' => $decoded,
+                    ]);
+
+                    if ($tentativa < $maxTentativas) {
+                        sleep($intervalo);
+                        continue;
+                    }
+
+                    throw new RuntimeException('Resposta de impressão não contém URL válida.');
+                }
+
+                $this->log('info', 'URL de impressão obtida com sucesso no Melhor Envio.', [
+                    'order_id' => $orderId,
+                    'mode' => $mode,
+                    'url' => $decoded['url'] ?? null,
+                    'tentativa' => $tentativa,
+                ]);
+
+                return $decoded;
+
+            } catch (GuzzleException $exception) {
+                $this->log('warning', "Tentativa {$tentativa}/{$maxTentativas}: Falha ao solicitar impressão de etiqueta.", [
+                    'exception' => $exception,
+                    'order_id' => $orderId,
+                    'mode' => $mode,
+                ]);
+
+                if ($tentativa < $maxTentativas) {
+                    sleep($intervalo);
+                    continue;
+                }
+
+                $this->log('error', 'Falha ao solicitar impressão de etiqueta após todas as tentativas.', [
+                    'exception' => $exception,
+                    'order_id' => $orderId,
+                    'tentativas' => $maxTentativas,
+                ]);
+
+                throw new RuntimeException('Falha ao solicitar impressão de etiqueta no Melhor Envio.', 0, $exception);
             }
         }
 
-        if ($labelBase64 === null) {
-            $this->log('warning', 'Etiqueta gerada sem conteúdo base64 no Melhor Envio.', [
+        return [];
+    }
+
+
+    /**
+     * Busca os dados atualizados de uma ordem com retry.
+     *
+     * @param string $orderId ID da ordem
+     * @return array Dados completos e atualizados da ordem
+     */
+    private function buscarOrdem(string $orderId): array
+    {
+        // Aguardar um pouco para o sistema processar a geração
+        // A geração de etiqueta é assíncrona e pode levar alguns segundos
+        $delaySegundos = $this->config['buscar_ordem_delay'] ?? 3;
+        
+        if ($delaySegundos > 0) {
+            $this->log('info', 'Aguardando processamento assíncrono da geração de etiqueta...', [
                 'order_id' => $orderId,
-                'response' => $labelDecoded,
+                'delay_segundos' => $delaySegundos,
             ]);
+            sleep($delaySegundos);
         }
 
-        $this->log('info', 'Etiqueta gerada com sucesso no Melhor Envio.', [
-            'order_id' => $orderId,
-            'tracking_code' => $trackingCode,
-            'label_type' => $labelType,
-        ]);
+        $maxTentativas = 3;
+        $intervalo = 2; // segundos entre tentativas
 
-        return new LabelResult(
-            provedor: 'melhor_envio',
-            codigoRastreio: $trackingCode ?? '',
-            etiquetaBase64: $labelBase64,
-            bruto: [
-                'order' => $orderData,
-                'label' => $labelDecoded,
-            ]
-        );
+        for ($tentativa = 1; $tentativa <= $maxTentativas; $tentativa++) {
+            try {
+                $response = $this->client->get("me/orders/{$orderId}", $this->withDefaultHeaders([]));
+                
+                $body = (string) $response->getBody();
+                $orderData = json_decode($body, true);
+
+                if (!is_array($orderData)) {
+                    $this->log('warning', "Tentativa {$tentativa}/{$maxTentativas}: Resposta inesperada ao buscar ordem.", [
+                        'body' => $body,
+                        'order_id' => $orderId,
+                    ]);
+                    
+                    if ($tentativa < $maxTentativas) {
+                        sleep($intervalo);
+                        continue;
+                    }
+                    
+                    return ['id' => $orderId];
+                }
+
+                $this->log('info', 'Dados da ordem atualizados obtidos com sucesso.', [
+                    'order_id' => $orderId,
+                    'status' => $orderData['status'] ?? null,
+                    'tracking' => $orderData['tracking'] ?? null,
+                    'tentativa' => $tentativa,
+                ]);
+
+                return $orderData;
+
+            } catch (GuzzleException $exception) {
+                $this->log('warning', "Tentativa {$tentativa}/{$maxTentativas}: Falha ao buscar dados da ordem.", [
+                    'exception' => $exception,
+                    'order_id' => $orderId,
+                ]);
+                
+                if ($tentativa < $maxTentativas) {
+                    sleep($intervalo);
+                    continue;
+                }
+                
+                // Retornar array básico ao invés de falhar completamente
+                return ['id' => $orderId];
+            }
+        }
+
+        // Fallback: retornar dados básicos
+        return ['id' => $orderId];
+    }
+
+    /**
+     * Extrai o código de rastreamento dos dados da ordem.
+     */
+    private function extrairCodigoRastreamento(array $orderData): ?string
+    {
+        $trackingCode = $orderData['tracking'] ?? null;
+
+        if ($trackingCode === null) {
+            return null;
+        }
+
+        if (is_string($trackingCode)) {
+            return $trackingCode;
+        }
+
+        if (is_array($trackingCode) && isset($trackingCode['code'])) {
+            return $trackingCode['code'];
+        }
+
+        return null;
     }
 
     /**
@@ -311,4 +599,3 @@ final class MelhorEnvioAdapter extends AbstractAdapter
         return $options;
     }
 }
-

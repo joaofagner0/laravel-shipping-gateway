@@ -7,6 +7,7 @@ Gateway unificado para Melhor Envio e Correios com foco em integrações Laravel
 - [Instalação](#instalação)
 - [Configuração](#configuração)
 - [Uso básico](#uso-básico)
+- [Melhor Envio - Fluxo Completo](#melhor-envio---fluxo-completo)
 - [Sandbox do Melhor Envio](#sandbox-do-melhor-envio)
 - [Logs e observabilidade](#logs-e-observabilidade)
 - [Testes](#testes)
@@ -130,6 +131,28 @@ class CheckoutController
 ```php
 $todas = $shippingManager->getRatesFromAllProviders($solicitacao);
 ```
+
+## Melhor Envio - Fluxo Completo
+
+O `MelhorEnvioAdapter` implementa **corretamente** o fluxo oficial da API do Melhor Envio, que consiste em 4 etapas automáticas:
+
+1. **Adicionar ao Carrinho** → `POST /api/v2/me/cart`
+2. **Finalizar Compra (Checkout)** → `POST /api/v2/me/shipment/checkout`
+3. **Gerar Etiqueta** → `POST /api/v2/me/shipment/generate`
+4. **Imprimir Etiqueta** → `POST /api/v2/me/shipment/print`
+
+Quando você chama `gerarEtiqueta()` ou `imprimirEtiqueta()`, todas essas etapas são executadas automaticamente. 
+
+**📚 Para exemplos completos e detalhados de uso do Melhor Envio, consulte:**  
+👉 **[EXEMPLO_MELHOR_ENVIO.md](EXEMPLO_MELHOR_ENVIO.md)**
+
+O documento inclui exemplos de:
+- Consulta de preços e obtenção do `service_id`
+- Geração de etiquetas com todos os campos obrigatórios
+- Múltiplos volumes e produtos
+- Opções de seguro, AR, mão própria
+- Tratamento de erros
+- E muito mais!
 
 ## Sandbox do Melhor Envio
 
